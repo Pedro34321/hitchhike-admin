@@ -5,6 +5,8 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { obterFirestore } from './firebaseMotoristas.js';
+import { calcularSplit, conferirRepasse, lerTarifaEstimadaBp } from './split.js';
+import { criarOauthMercadoPago } from './mercadopagoOauth.js';
 
 const MP_API = 'https://api.mercadopago.com';
 const TAXA_PERCENTUAL = 25;
@@ -81,7 +83,13 @@ export function criarTratadorPagamentos(deps = {}) {
       accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN || '',
       webhookSecret: process.env.MERCADOPAGO_WEBHOOK_SECRET || '',
       baseUrl: (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, ''),
-      urlCheckout: process.env.MERCADOPAGO_CHECKOUT_URL === 'sandbox_init_point' ? 'sandbox_init_point' : 'init_point'
+      urlCheckout: process.env.MERCADOPAGO_CHECKOUT_URL === 'sandbox_init_point' ? 'sandbox_init_point' : 'init_point',
+      // Split 1:1: DESLIGADO por padrão. Só ativa com MERCADOPAGO_SPLIT_ENABLED=true.
+      splitAtivo: process.env.MERCADOPAGO_SPLIT_ENABLED === 'true',
+      // Tarifa Mercado Pago ESTIMADA (%). Sem valor configurado o split não é habilitado.
+      tarifaBp: lerTarifaEstimadaBp(process.env.MERCADOPAGO_TARIFA_PIX_PERCENT || ''),
+      // Restringe o checkout a Pix (bank_transfer) para a estimativa de tarifa fazer sentido.
+      restringirPix: process.env.MERCADOPAGO_SPLIT_SOMENTE_PIX !== 'false'
     }),
     firestore: () => obterFirestore(),
     verificarToken: async token => {
@@ -103,8 +111,10 @@ export function criarTratadorPagamentos(deps = {}) {
     return c;
   }
 
-  async function mercadoPago(caminho, { method = 'GET', body, chaveIdempotencia } = {}) {
-    const { accessToken } = d.config();
+  const oauth = d.oauth || criarOauthMercadoPago({ fetch: d.fetch, agora: d.agora });
+
+  async function mercadoPago(caminho, { method = 'GET', body, chaveIdempotencia, token } = {}) {
+    const accessToken = token || d.config().accessToken;
     const cabecalhos = { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' };
     if (body) cabecalhos['Content-Type'] = 'application/json';
     if (chaveIdempotencia) cabecalhos['X-Idempotency-Key'] = chaveIdempotencia;
@@ -143,7 +153,28 @@ export function criarTratadorPagamentos(deps = {}) {
       const doc = await tx.get(ref);
       if (!doc.exists) return { ignorado: 'nao_encontrado' };
       const atual = doc.data() || {};
-      if (atual.status === 'APROVADO') return { ignorado: 'ja_aprovado', status: 'APROVADO' };
+      const financeiro = () => {
+        if (atual.split !== true || mp.status !== 'approved') return {};
+        const c = conferirRepasse(mp, atual.valorBaseCentavos);
+        const campos = {
+          reconciliacao: c.situacao,
+          tarifaRealCentavos: c.tarifaRealCentavos ?? null,
+          comissaoRealCentavos: c.comissaoRealCentavos ?? null,
+          liquidoMotoristaCentavos: c.liquidoMotoristaCentavos ?? null,
+          diferencaMotoristaCentavos: c.diferencaMotoristaCentavos ?? null,
+          divergenciaFinanceira: c.situacao === 'DIVERGENTE'
+        };
+        return campos;
+      };
+      if (atual.status === 'APROVADO') {
+        // Aprovação nunca regride; só completa a conferência financeira se ainda estava indisponível.
+        if (atual.split === true && atual.reconciliacao === 'INDISPONIVEL' && mp.status === 'approved'
+          && String(mp.id) === atual.mpPaymentId) {
+          const extra = financeiro();
+          if (extra.reconciliacao && extra.reconciliacao !== 'INDISPONIVEL') tx.update(ref, { ...extra, atualizadoEm: d.agora() });
+        }
+        return { ignorado: 'ja_aprovado', status: 'APROVADO' };
+      }
       const ultimaMp = mp.date_last_updated ? Date.parse(mp.date_last_updated) : NaN;
       const ultimaGravada = atual.mpUltimaAtualizacao ? Date.parse(atual.mpUltimaAtualizacao) : NaN;
       if (novoStatus !== 'APROVADO' && Number.isFinite(ultimaMp) && Number.isFinite(ultimaGravada) && ultimaMp < ultimaGravada) {
@@ -151,7 +182,8 @@ export function criarTratadorPagamentos(deps = {}) {
       }
       const valorConfere = typeof mp.transaction_amount === 'number'
         && Math.round(Number((mp.transaction_amount * 100).toFixed(4))) === atual.totalCentavos;
-      const consistente = mp.currency_id === 'BRL' && valorConfere && mp.live_mode !== true;
+      const coletorConfere = atual.split !== true || String(mp.collector_id ?? '') === atual.mpCollectorId;
+      const consistente = mp.currency_id === 'BRL' && valorConfere && coletorConfere && mp.live_mode !== true;
       const agora = d.agora();
       const campos = {
         mpPaymentId: String(mp.id),
@@ -164,14 +196,14 @@ export function criarTratadorPagamentos(deps = {}) {
         tx.update(ref, { ...campos, status: 'DIVERGENTE' });
         return { status: 'DIVERGENTE' };
       }
-      if (novoStatus === 'APROVADO') campos.aprovadoEm = agora;
+      if (novoStatus === 'APROVADO') Object.assign(campos, { aprovadoEm: agora }, financeiro());
       tx.update(ref, { ...campos, status: novoStatus });
       return { status: novoStatus };
     });
   }
 
-  async function reconciliarPorReferencia(db, pagamentoId) {
-    const r = await mercadoPago(`/v1/payments/search?external_reference=${encodeURIComponent(pagamentoId)}&sort=date_created&criteria=desc&limit=10`);
+  async function reconciliarPorReferencia(db, pagamentoId, token) {
+    const r = await mercadoPago(`/v1/payments/search?external_reference=${encodeURIComponent(pagamentoId)}&sort=date_created&criteria=desc&limit=10`, { token });
     if (!r.ok || !Array.isArray(r.dados?.results)) return false;
     const ordenados = r.dados.results
       .filter(p => p?.external_reference === pagamentoId)
@@ -181,7 +213,7 @@ export function criarTratadorPagamentos(deps = {}) {
   }
 
   async function criarPreferencia(req, res) {
-    const config = configuracao({ exigirToken: true });
+    const config = configuracao({ exigirToken: !d.config().splitAtivo });
     if (!req.headers['content-type']?.startsWith('application/json')) falhar(415, 'Use application/json.');
     const corpo = await lerJson(req);
     const caronaId = corpo?.caronaId;
@@ -211,6 +243,17 @@ export function criarTratadorPagamentos(deps = {}) {
     const jaPago = await db.collection('pagamentos').where('solicitacaoId', '==', solicitacaoId).where('status', '==', 'APROVADO').limit(1).get();
     if (jaPago.docs.length) falhar(409, 'Esta solicitação já foi paga.');
 
+    // Split 1:1 (desligado por padrão): usa a conta OAuth do motorista e marketplace_fee.
+    let split = null;
+    if (config.splitAtivo) {
+      if (config.tarifaBp === null) falhar(503, 'Split de pagamentos não configurado (tarifa estimada ausente).');
+      const conta = await oauth.obterContaMotorista(dadosCarona.motoristaUid);
+      if (!conta) falhar(409, 'O motorista ainda não vinculou a conta do Mercado Pago.');
+      const calculo = calcularSplit({ baseCentavos: valores.baseCentavos, taxaCentavos: valores.taxaCentavos, tarifaBp: config.tarifaBp });
+      if (!calculo.viavel) falhar(422, 'Valor insuficiente para dividir o pagamento.');
+      split = { calculo, conta };
+    }
+
     const ref = db.collection('pagamentos').doc();
     const pagamentoId = ref.id;
     const corpoPreferencia = {
@@ -224,13 +267,23 @@ export function criarTratadorPagamentos(deps = {}) {
       external_reference: pagamentoId,
       statement_descriptor: 'HITCHHIKE'
     };
+    if (split) {
+      corpoPreferencia.marketplace_fee = reais(split.calculo.marketplaceFeeCentavos);
+      if (config.restringirPix) {
+        // Pendente de validação prática: tipos excluídos para deixar apenas Pix (bank_transfer).
+        corpoPreferencia.payment_methods = {
+          excluded_payment_types: ['credit_card', 'debit_card', 'ticket', 'atm', 'prepaid_card', 'account_money']
+        };
+      }
+    }
     if (/^https:\/\/[^\s/]+/.test(config.baseUrl)) {
-      corpoPreferencia.notification_url = `${config.baseUrl}/api/pagamentos/webhook`;
+      // No split o pid indica qual conta de motorista consultar; a aprovação continua dependendo da assinatura e da API.
+      corpoPreferencia.notification_url = `${config.baseUrl}/api/pagamentos/webhook${split ? `?pid=${pagamentoId}` : ''}`;
       const retorno = `${config.baseUrl}/api/pagamentos/retorno`;
       corpoPreferencia.back_urls = { success: retorno, pending: retorno, failure: retorno };
       corpoPreferencia.auto_return = 'approved';
     }
-    const criada = await mercadoPago('/checkout/preferences', { method: 'POST', body: corpoPreferencia, chaveIdempotencia: pagamentoId });
+    const criada = await mercadoPago('/checkout/preferences', { method: 'POST', body: corpoPreferencia, chaveIdempotencia: pagamentoId, token: split?.conta.accessToken });
     const urlCheckout = criada.dados?.[config.urlCheckout];
     if (!criada.ok || typeof criada.dados?.id !== 'string' || typeof urlCheckout !== 'string') {
       console.error(`Mercado Pago recusou a criação da preferência (HTTP ${criada.status}).`);
@@ -257,6 +310,17 @@ export function criarTratadorPagamentos(deps = {}) {
       mpPreferenceId: criada.dados.id,
       mpPaymentId: null,
       mpStatus: null,
+      ...(split ? {
+        split: true,
+        mpCollectorId: split.conta.collectorId,
+        marketplaceFeeCentavos: split.calculo.marketplaceFeeCentavos,
+        tarifaEstimadaCentavos: split.calculo.tarifaEstimadaCentavos,
+        tarifaEstimadaBp: config.tarifaBp,
+        motoristaPrevistoCentavos: split.calculo.motoristaPrevistoCentavos,
+        somentePix: config.restringirPix,
+        reconciliacao: 'PENDENTE',
+        divergenciaFinanceira: false
+      } : { split: false }),
       criadoEm: agora,
       atualizadoEm: agora
     });
@@ -278,9 +342,11 @@ export function criarTratadorPagamentos(deps = {}) {
     const inicial = doc.exists ? doc.data() || {} : null;
     if (!inicial || (inicial.passageiroUid !== uid && inicial.motoristaUid !== uid)) falhar(404, 'Pagamento não encontrado.');
     let consultaMp = 'nao_necessaria';
-    if (inicial.status !== 'APROVADO' && inicial.passageiroUid === uid && d.config().accessToken) {
+    if (inicial.status !== 'APROVADO' && inicial.passageiroUid === uid) {
       try {
-        consultaMp = (await reconciliarPorReferencia(db, pagamentoId)) ? 'ok' : 'indisponivel';
+        let token = d.config().accessToken;
+        if (inicial.split === true) token = (await oauth.obterContaMotorista(inicial.motoristaUid))?.accessToken || '';
+        consultaMp = token && (await reconciliarPorReferencia(db, pagamentoId, token)) ? 'ok' : 'indisponivel';
       } catch {
         consultaMp = 'indisponivel';
       }
@@ -300,7 +366,7 @@ export function criarTratadorPagamentos(deps = {}) {
   }
 
   async function receberWebhook(req, res, url) {
-    const config = configuracao({ exigirSegredo: true, exigirToken: true });
+    const config = configuracao({ exigirSegredo: true });
     const corpo = await lerJson(req);
     const dataId = String(url.searchParams.get('data.id') ?? corpo?.data?.id ?? '');
     const valida = assinaturaWebhookValida({
@@ -319,8 +385,18 @@ export function criarTratadorPagamentos(deps = {}) {
       return;
     }
     const db = banco();
+    // Pagamentos em split pertencem à conta do motorista: a consulta usa o token dele (via pid).
+    let token = config.accessToken;
+    const pid = url.searchParams.get('pid');
+    if (pid && ID_SEGURO.test(pid)) {
+      const alvo = await db.collection('pagamentos').doc(pid).get();
+      if (alvo.exists && alvo.data()?.split === true) {
+        try { token = (await oauth.obterContaMotorista(alvo.data().motoristaUid))?.accessToken || ''; } catch { token = ''; }
+      }
+    }
+    if (!token) falhar(503, 'Pagamentos de teste não configurados.');
     let consulta;
-    try { consulta = await mercadoPago(`/v1/payments/${dataId}`); } catch { consulta = null; }
+    try { consulta = await mercadoPago(`/v1/payments/${dataId}`, { token }); } catch { consulta = null; }
     if (!consulta || consulta.status >= 500 || consulta.status === 429) falhar(502, 'Mercado Pago indisponível. Tente novamente.');
     if (!consulta.ok || !consulta.dados) {
       json(res, 200, { ok: true, ignorado: 'pagamento_nao_encontrado' });
