@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { randomBytes, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
 import { db, audit } from './db.js';
+import { tratarPagamentos } from './pagamentos.js';
+import { listarSolicitacoesMotoristas, decidirSolicitacaoMotorista, listarUsuarios, listarCaronas, auditoriaDeTeste } from './firebaseMotoristas.js';
 const prod=process.env.NODE_ENV==='production';
 const publicDir=fileURLToPath(new URL('./public/',import.meta.url));
 const attempts=new Map();
@@ -21,7 +23,9 @@ export const server=http.createServer(async(req,res)=>{
  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
  try{
  const url=new URL(req.url,'http://localhost');const path=url.pathname;
- if(req.method==='GET'&&!path.startsWith('/api/')){const files={'/':'index.html','/styles.css':'styles.css','/app.js':'app.js'};if(!files[path])fail('Página não encontrada',404);const type=path.endsWith('.css')?'text/css':path.endsWith('.js')?'text/javascript':'text/html';res.writeHead(200,{'Content-Type':type+'; charset=utf-8'});res.end(await readFile(publicDir+files[path]));return;}
+  /* Pagamentos de teste: autenticação Firebase ou assinatura do webhook, tratadas no módulo (sem cookie administrativo). */
+  if(path.startsWith('/api/pagamentos/')&&await tratarPagamentos(req,res,url))return;
+ if(req.method==='GET'&&!path.startsWith('/api/')){const files={'/':'index.html','/styles.css':'styles.css','/app.js':'app.js','/visaoResumo.js':'visaoResumo.js'};if(!files[path])fail('Página não encontrada',404);const type=path.endsWith('.css')?'text/css':path.endsWith('.js')?'text/javascript':'text/html';res.writeHead(200,{'Content-Type':type+'; charset=utf-8'});res.end(await readFile(publicDir+files[path]));return;}
  if(!['GET','POST'].includes(req.method))fail('Método não permitido',405);
  if(req.method==='POST'){
   if(req.headers['sec-fetch-site']==='cross-site')fail('Origem não permitida',403);
@@ -38,6 +42,11 @@ export const server=http.createServer(async(req,res)=>{
  const admin=session(req);if(!admin)fail('Entre com sua conta de administrador.',401);
  if(path==='/api/logout'&&req.method==='POST'){db.prepare('DELETE FROM sessions WHERE token=?').run(admin.token);res.setHeader('Set-Cookie',cookie('',0));json(res,200,{ok:true});return;}
  if(path==='/api/password'&&req.method==='POST'){const b=await body(req);const current=str(b.current,1,256),password=str(b.password,12,256);const row=db.prepare('SELECT * FROM admins WHERE id=?').get(admin.id);if(!timingSafeEqual(scryptSync(current,row.salt,64),Buffer.from(row.hash,'hex')))fail('Senha atual incorreta',403);const salt=randomBytes(16).toString('hex');transaction(()=>{db.prepare('UPDATE admins SET salt=?,hash=? WHERE id=?').run(salt,scryptSync(password,salt,64).toString('hex'),admin.id);db.prepare('DELETE FROM sessions WHERE admin_id=?').run(admin.id);audit(admin.email,'senha alterada','admin','Sessões encerradas');});res.setHeader('Set-Cookie',cookie('',0));json(res,200,{ok:true});return;}
+ if(path==='/api/solicitacoes-motoristas'&&req.method==='GET'){json(res,200,await listarSolicitacoesMotoristas());return;}
+ if(path==='/api/usuarios'&&req.method==='GET'){json(res,200,await listarUsuarios());return;}
+ if(path==='/api/caronas'&&req.method==='GET'){json(res,200,await listarCaronas());return;}
+ const decisaoMatch=path.match(/^\/api\/solicitacoes-motoristas\/([A-Za-z0-9_-]{1,128})\/decisao$/);
+ if(decisaoMatch&&req.method==='POST'){const b=await body(req);if(b.decisao!=='aprovar'&&b.decisao!=='recusar')fail('Decisão inválida.');const resultado=await decidirSolicitacaoMotorista(decisaoMatch[1],b.decisao);if(!resultado.ok){json(res,resultado.status,{error:resultado.error,decisaoAplicada:false,auditoria:false});return;}try{(auditoriaDeTeste()||audit)(admin.email,resultado.acao,resultado.uid,resultado.motivo);}catch{json(res,500,{error:'A decisão foi aplicada no Firestore, mas não foi registrada no histórico.',decisaoAplicada:true,auditoria:false,status:resultado.statusSolicitacao});return;}json(res,200,{ok:true,decisaoAplicada:true,auditoria:true,status:resultado.statusSolicitacao});return;}
  if(path==='/api/data'&&req.method==='GET'){json(res,200,{admin:{email:admin.email},demo:db.prepare("SELECT value FROM settings WHERE key='demo'").get()?.value==='true',people:db.prepare('SELECT * FROM people ORDER BY id DESC').all(),trips:tripFilter(url),reports:db.prepare('SELECT r.*,p.name target_name,p.role target_role FROM reports r JOIN people p ON p.id=r.target_id ORDER BY r.id DESC').all(),audit:db.prepare('SELECT * FROM audit ORDER BY id DESC LIMIT 200').all()});return;}
  const match=path.match(/^\/api\/people\/(\d+)\/status$/);
  if(match&&req.method==='POST'){const b=await body(req);const reason=str(b.reason,5,1000);const row=db.prepare('SELECT * FROM people WHERE id=?').get(Number(match[1]));if(!row)fail('Cadastro não encontrado',404);const transitions=row.role==='motorista'?{pendente:['ativo','cancelado'],ativo:['suspenso','cancelado'],suspenso:['ativo','cancelado'],cancelado:[]}:{ativo:['bloqueado','cancelado'],bloqueado:['ativo','cancelado'],cancelado:[]};if(!transitions[row.status]?.includes(b.status))fail('Esta alteração não é permitida para o status atual.',409);transaction(()=>{db.prepare('UPDATE people SET status=?,reason=? WHERE id=?').run(b.status,reason,row.id);audit(admin.email,`${row.status} → ${b.status}`,`${row.role} #${row.id}`,reason);});json(res,200,{ok:true});return;}

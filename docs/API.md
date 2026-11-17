@@ -7,13 +7,19 @@ Base local: `http://localhost:3000/api`. Todas as rotas, exceto login, exigem co
 | POST | `/login` | `{ "email": "...", "password": "..." }` |
 | POST | `/logout` | `{}`; revoga a sessão corrente |
 | GET | `/data` | Conta autenticada, pessoas, viagens, denúncias e últimas 200 ações |
+| GET | `/solicitacoes-motoristas` | Leitura das solicitações reais em `solicitacoes_motoristas/{uid}`, com nome, e-mail, curso e instituição de `usuarios/{uid}`. Sem credencial, responde 200 com `disponivel: false` |
+| GET | `/usuarios` | Leitura de `usuarios/{uid}`: UID, nome, e-mail, curso, instituição, `papelAtivo`, `status` e `condutorValidado` booleano. No máximo 100 documentos. Sem credencial, responde 200 com `disponivel: false`. Não grava no Firestore |
+| GET | `/caronas` | Leitura de `caronas`: motorista, origem, destino, saída, vagas, valor e status calculado como no aplicativo. No máximo 100 documentos. Sem credencial, responde 200 com `disponivel: false`. Não grava no Firestore e não entra no CSV |
+| POST | `/solicitacoes-motoristas/:uid/decisao` | `{ "decisao": "aprovar" }` ou `{ "decisao": "recusar" }`. Exige sessão, JSON e a mesma proteção de origem das outras escritas. Só altera solicitação com status exatamente `PENDENTE`. Aprovar também exige `usuarios/{uid}.status` igual a `ATIVO` |
 | POST | `/people/:id/status` | `{ "status": "suspenso", "reason": "Justificativa obrigatória" }` |
 | POST | `/reports` | `{ "target_id": 2, "trip_id": 1, "reporter": "Nome", "category": "Conduta inadequada", "description": "Descrição com ao menos 10 caracteres" }`; `trip_id` opcional |
 | POST | `/reports/:id` | `{ "status": "resolvida", "resolution": "Parecer da análise" }` |
 | GET | `/trips.csv?from=2026-10-01&to=2026-10-31&status=concluida` | Exporta viagens do período inclusivo; filtros opcionais |
 | POST | `/password` | `{ "current": "...", "password": "nova senha de no mínimo 12 caracteres" }`; revoga todas as sessões |
 
-Erros: `{ "error": "Mensagem em português" }`, com HTTP 400, 401, 403, 404, 409, 413, 415 ou 429 conforme o caso. Falhas inesperadas retornam 500 sem detalhes internos.
+Erros: `{ "error": "Mensagem em português" }`, com HTTP 400, 401, 403, 404, 409, 413, 415, 429 ou 503 conforme o caso. Falhas inesperadas retornam 500 sem detalhes internos.
+
+A decisão do motorista grava primeiro no Firestore, numa única transação, e só depois tenta registrar a auditoria no SQLite. Esses bancos não compartilham uma transação. Se a auditoria falhar, a resposta é 500 com `decisaoAplicada: true` e `auditoria: false`: a decisão permanece no Firestore, não é repetida e não é desfeita. A auditoria guarda o administrador, o UID, a decisão e a data, sem placa, CNH ou outros dados do perfil.
 
 ## Regras
 

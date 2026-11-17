@@ -47,13 +47,13 @@ A aprovação representa a decisão do administrador após conferência externa 
 
 ## Testar
 
-Execute `npm test`. Os testes usam um banco temporário e verificam acesso protegido, credenciais incorretas, cookie de sessão, origem de requisições, justificativa mínima, transições válidas, bloqueios, denúncias, auditoria, filtros CSV, neutralização de fórmulas, troca de senha e logout.
+Execute `npm test`. Os testes usam um banco temporário e verificam acesso protegido, credenciais incorretas, cookie de sessão, origem de requisições, justificativa mínima, transições válidas, bloqueios, denúncias, auditoria, filtros CSV, neutralização de fórmulas, troca de senha, logout e a leitura autenticada das solicitações, dos usuários e das caronas reais, sem devolver CNH, hash de senha ou chave privada.
 
 ## Hospedar
 
 **GitHub armazena o código; GitHub Pages não executa este servidor nem SQLite.** Use um servidor com Node.js 24 e disco persistente. Execute `npm run setup` no ambiente de hospedagem, configure `NODE_ENV=production` e coloque um proxy HTTPS na frente do processo local (porta 3000 por padrão). Em produção o cookie exige HTTPS. Mantenha a pasta `data/` em volume persistente e faça backups consistentes do SQLite, incluindo o estado WAL (preferencialmente pelo mecanismo de backup do SQLite).
 
-As variáveis opcionais são `PORT`, `DB_PATH` e `NODE_ENV`. `.env.example` documenta os nomes, mas `.env` não é carregado automaticamente; use variáveis do provedor ou `node --env-file=.env server.js`. O servidor escuta em `127.0.0.1`, adequado para proxy reverso na mesma máquina. Não altere para exposição pública sem configurar HTTPS e os controles do ambiente.
+As variáveis opcionais são `PORT`, `DB_PATH`, `NODE_ENV` e `FIREBASE_SERVICE_ACCOUNT_PATH`. O comando `npm start` carrega `.env` quando esse arquivo existe. A variável aponta para o JSON da conta de serviço do projeto `hitchhike-9568f`, guardado fora do repositório. Sem essa credencial, o painel local continua ativo e informa que a leitura do Firestore está indisponível. A tela Usuários consulta `usuarios` e a tela Viagens consulta `caronas`, ambas sem alterar documentos. O CSV continua exportando somente as viagens do SQLite. Aprovar e recusar uma solicitação real grava o Firestore primeiro e a auditoria do SQLite em seguida. Se só a auditoria falhar, o painel informa que a decisão já foi aplicada e não a desfaz. O servidor escuta em `127.0.0.1`, adequado para proxy reverso na mesma máquina. Não altere para exposição pública sem configurar HTTPS e os controles do ambiente.
 
 Esta versão usa limitação de login em memória por IP (10 tentativas / 15 minutos). Atrás de proxy, o limite é compartilhado pelo IP do proxy; configure também limites no proxy para uso real. Reinícios zeram esse limite. Para implantação com vários processos, implemente limitação compartilhada e um banco adequado a esse cenário. O protótipo não é uma certificação de conformidade legal ou de segurança operacional.
 
