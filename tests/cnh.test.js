@@ -23,6 +23,14 @@ test('OCR só sugere campos junto aos rótulos e sempre exige revisão',()=>{
  assert.equal(sugerirCnh('VALIDADE 30/02/2030').sugestoes.validade,'');
  assert.equal(sugerirCnh('').revisaoNecessaria,true);
 });
+test('OCR não confunde emissão com validade e se abstém em baixa confiança',()=>{
+ assert.equal(sugerirCnh('VALIDADE\nEMISSAO 02/10/2025',95).sugestoes.validade,'');
+ assert.equal(sugerirCnh('EMISSAO VALIDADE\n02/10/2025 03/01/2027',95).sugestoes.validade,'');
+ assert.equal(sugerirCnh('VALIDADE\n02/10/2025 03/01/2027',95).sugestoes.validade,'');
+ assert.equal(sugerirCnh('VALIDADE\n03/01/2027',95).sugestoes.validade,'2027-01-03');
+ assert.equal(sugerirCnh('VALIDADE 03/01/2027',53).sugestoes.validade,'');
+ assert.equal(sugerirCnh('NOME\nRONA | PESSOA TESTE | (25072024)',95).sugestoes.nome,'');
+});
 test('aprovação exige conferência privada; renovação nunca reativa por conta própria',async()=>{
  const db=fake(),uid='teste';db.docs.set('usuarios/'+uid,{status:'ATIVO',papelAtivo:'PASSAGEIRO',condutorValidado:false});db.docs.set('solicitacoes_motoristas/'+uid,{status:'PENDENTE',motoristaUid:uid});definirProvedorParaTeste(()=>db);
  assert.equal((await decidirSolicitacaoMotorista(uid,'aprovar')).status,409);

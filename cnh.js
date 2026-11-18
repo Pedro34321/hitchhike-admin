@@ -24,10 +24,24 @@ export function validarConferencia(b) {
 export function sugerirCnh(texto,confidence=0) {
   const linhas=String(texto).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().split(/\r?\n/).map(x=>x.trim());
   const proximo=(regex)=>{const i=linhas.findIndex(x=>regex.test(x));return i<0?'':linhas.slice(i,i+3).join(' ');};
-  const validadeTexto=proximo(/VALIDADE/),datas=[...validadeTexto.matchAll(/\b(\d{2})[\/.-](\d{2})[\/.-](\d{4})\b/g)].map(m=>`${m[3]}-${m[2]}-${m[1]}`).filter(dataValida);
+  // Não varrer as três linhas seguintes: elas podem pertencer à emissão ou ao nascimento.
+  const indices=linhas.map((x,i)=>/\bVALIDADE\b/.test(x)?i:-1).filter(i=>i>=0);
+  const trecho=indices.length===1?linhas[indices[0]]:'';
+  const outrosRotulos=/NASCIMENTO|EMISSAO|EXPEDICAO|HABILITACAO|1[ªA.]?\s*HAB|\bCPF\b|\bREGISTRO\b/;
+  const dataRegex=/\b(\d{2})[\/.-](\d{2})[\/.-](\d{4})\b/g;
+  let candidato='';
+  if(trecho&&!outrosRotulos.test(trecho)){
+    const depois=trecho.replace(/^.*?\bVALIDADE\b\s*[:.-]?\s*/,'');
+    if(/^(?:\d{2}[\/.-]\d{2}[\/.-]\d{4})\s*$/.test(depois))candidato=depois;
+    else if(!depois&&/^\d{2}[\/.-]\d{2}[\/.-]\d{4}$/.test(linhas[indices[0]+1]||''))candidato=linhas[indices[0]+1];
+  }
+  const datas=[...candidato.matchAll(dataRegex)].map(m=>`${m[3]}-${m[2]}-${m[1]}`).filter(dataValida);
   const nomeLinha=linhas.findIndex(x=>/\bNOME\b/.test(x));
   const nome=nomeLinha<0?'':linhas[nomeLinha].replace(/^.*?\bNOME\b\s*[:.-]?\s*/,'').replace(/E SOBRENOME.*/,'').trim()||linhas[nomeLinha+1]||'';
   const categoria=proximo(/CAT(?:EGORIA)?\.?\s*(?:HAB|HABILITACAO)/).match(/(?:HAB(?:ILITACAO)?\.?\s*[:.-]?\s*)(AB|AC|AD|AE|ACC|A|B|C|D|E)\b/)?.[1]||'';
-  const sugestoes={nome:nome.slice(0,200),categoria,validade:datas.length===1?datas[0]:''};
-  return {sugestoes,confianca:Number.isFinite(confidence)?confidence:0,revisaoNecessaria:true,mensagem:'Sugestões de OCR. Corrija os campos e confira documento e QR no Vio. OCR não comprova autenticidade.'};
+  const confianca=Number.isFinite(confidence)?confidence:0;
+  const baixaConfianca=confianca<70;
+  const nomeLimpo=/^[A-Z][A-Z '\-]{2,199}$/.test(nome)?nome:'';
+  const sugestoes=baixaConfianca?{nome:'',categoria:'',validade:''}:{nome:nomeLimpo,categoria,validade:datas.length===1?datas[0]:''};
+  return {sugestoes,confianca,revisaoNecessaria:true,mensagem:(baixaConfianca?'Leitura inconclusiva: confiança baixa; preencha os campos manualmente. ':'Sugestões de OCR. ')+(sugestoes.validade?'Confira a validade sugerida no documento. ':'Validade não identificada com segurança; confira e preencha manualmente. ')+'Confira documento e QR no Vio. OCR não comprova autenticidade.'};
 }
