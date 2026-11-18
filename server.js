@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { randomBytes, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
 import { db, audit } from './db.js';
+import { lerCnh } from './ocr.js';
+import { salvarConferencia, listarCnh, iniciarControleCnh } from './cnhFirebase.js';
 import { tratarPagamentos } from './pagamentos.js';
 import { listarSolicitacoesMotoristas, decidirSolicitacaoMotorista, listarUsuarios, listarCaronas, auditoriaDeTeste } from './firebaseMotoristas.js';
 const prod=process.env.NODE_ENV==='production';
@@ -12,7 +14,7 @@ const digest=s=>createHash('sha256').update(s).digest('hex');
 export function csvCell(value){let s=String(value??'');if(/^[\s]*[=+@-]/.test(s)||/^[\t\r\n]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"';}
 function fail(message,status=400){throw Object.assign(Error(message),{status});}
 function json(res,status,data){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));}
-async function body(req){let s='';for await(const chunk of req){s+=chunk;if(Buffer.byteLength(s)>32768)fail('Requisição muito grande',413);}try{return JSON.parse(s||'{}');}catch{fail('JSON inválido');}}
+async function body(req,limite=32768){const partes=[];let total=0;for await(const chunk of req){total+=chunk.length;if(total>limite)fail('Requisição muito grande',413);partes.push(chunk);}try{return JSON.parse(Buffer.concat(partes).toString('utf8')||'{}');}catch{fail('JSON inválido');}}
 function str(v,min=1,max=1000){if(typeof v!=='string'||v.trim().length<min||v.length>max)fail(`Preencha o campo com ${min} a ${max} caracteres.`);return v.trim();}
 function transaction(fn){db.exec('BEGIN IMMEDIATE');try{const result=fn();db.exec('COMMIT');return result;}catch(e){db.exec('ROLLBACK');throw e;}}
 function cookie(token='',age=28800){return `hh_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${age}${prod?'; Secure':''}`;}
@@ -25,7 +27,7 @@ export const server=http.createServer(async(req,res)=>{
  const url=new URL(req.url,'http://localhost');const path=url.pathname;
   /* Pagamentos de teste: autenticação Firebase ou assinatura do webhook, tratadas no módulo (sem cookie administrativo). */
   if(path.startsWith('/api/pagamentos/')&&await tratarPagamentos(req,res,url))return;
- if(req.method==='GET'&&!path.startsWith('/api/')){const files={'/':'index.html','/styles.css':'styles.css','/app.js':'app.js','/visaoResumo.js':'visaoResumo.js'};if(!files[path])fail('Página não encontrada',404);const type=path.endsWith('.css')?'text/css':path.endsWith('.js')?'text/javascript':'text/html';res.writeHead(200,{'Content-Type':type+'; charset=utf-8'});res.end(await readFile(publicDir+files[path]));return;}
+ if(req.method==='GET'&&!path.startsWith('/api/')){const files={'/':'index.html','/styles.css':'styles.css','/app.js':'app.js','/visaoResumo.js':'visaoResumo.js','/cnhUi.js':'cnhUi.js'};if(!files[path])fail('Página não encontrada',404);const type=path.endsWith('.css')?'text/css':path.endsWith('.js')?'text/javascript':'text/html';res.writeHead(200,{'Content-Type':type+'; charset=utf-8'});res.end(await readFile(publicDir+files[path]));return;}
  if(!['GET','POST'].includes(req.method))fail('Método não permitido',405);
  if(req.method==='POST'){
   if(req.headers['sec-fetch-site']==='cross-site')fail('Origem não permitida',403);
@@ -40,6 +42,10 @@ export const server=http.createServer(async(req,res)=>{
   attempts.delete(key);db.prepare('DELETE FROM sessions WHERE expires<?').run(now);const token=randomBytes(32).toString('hex');db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(digest(token),admin.id,now+28800000);res.setHeader('Set-Cookie',cookie(token));json(res,200,{email:admin.email});return;
  }
  const admin=session(req);if(!admin)fail('Entre com sua conta de administrador.',401);
+ if(path==='/api/cnh/ocr'&&req.method==='POST'){const b=await body(req,7100000);json(res,200,await lerCnh(b.imagem));return;}
+ if(path==='/api/cnh'&&req.method==='GET'){json(res,200,await listarCnh());return;}
+ const cnhMatch=path.match(/^\/api\/cnh\/([A-Za-z0-9_-]{1,128})$/);
+ if(cnhMatch&&req.method==='POST'){json(res,200,await salvarConferencia(cnhMatch[1],await body(req),admin.email));return;}
  if(path==='/api/logout'&&req.method==='POST'){db.prepare('DELETE FROM sessions WHERE token=?').run(admin.token);res.setHeader('Set-Cookie',cookie('',0));json(res,200,{ok:true});return;}
  if(path==='/api/password'&&req.method==='POST'){const b=await body(req);const current=str(b.current,1,256),password=str(b.password,12,256);const row=db.prepare('SELECT * FROM admins WHERE id=?').get(admin.id);if(!timingSafeEqual(scryptSync(current,row.salt,64),Buffer.from(row.hash,'hex')))fail('Senha atual incorreta',403);const salt=randomBytes(16).toString('hex');transaction(()=>{db.prepare('UPDATE admins SET salt=?,hash=? WHERE id=?').run(salt,scryptSync(password,salt,64).toString('hex'),admin.id);db.prepare('DELETE FROM sessions WHERE admin_id=?').run(admin.id);audit(admin.email,'senha alterada','admin','Sessões encerradas');});res.setHeader('Set-Cookie',cookie('',0));json(res,200,{ok:true});return;}
  if(path==='/api/solicitacoes-motoristas'&&req.method==='GET'){json(res,200,await listarSolicitacoesMotoristas());return;}
@@ -57,4 +63,4 @@ export const server=http.createServer(async(req,res)=>{
  fail('Rota não encontrada',404);
  }catch(e){if(!e.status)console.error('Falha no servidor:',e.message);json(res,e.status||500,{error:e.status?e.message:'Erro interno. Tente novamente.'});}
 });
-if(process.argv[1]===fileURLToPath(import.meta.url)){server.listen(Number(process.env.PORT||3000),'127.0.0.1',()=>console.log(`Hitchhike: http://localhost:${process.env.PORT||3000}`));}
+if(process.argv[1]===fileURLToPath(import.meta.url)){iniciarControleCnh();server.listen(Number(process.env.PORT||3000),'127.0.0.1',()=>console.log(`Hitchhike: http://localhost:${process.env.PORT||3000}`));}
