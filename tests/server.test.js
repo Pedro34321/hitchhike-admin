@@ -49,7 +49,7 @@ test('rotas CNH exigem sessão, origem permitida e campos válidos',async()=>{
  const r=await call('login',{email:'reader@example.com',password:'ReaderPassword123'},false);
  const sessao=r.headers.get('set-cookie').split(';')[0];
  assert.equal((await call('cnh/ocr',{imagem:'invalida'},false,{cookie:sessao,Origin:'https://evil.example'})).status,403);
- assert.equal((await call('cnh/ocr',{imagem:'invalida'},false,{cookie:sessao})).status,400);
+ assert.equal((await call('cnh/ocr',{imagem:'invalida'},false,{cookie:sessao})).status,415);
  assert.equal((await call('cnh/uid',{nome:'Pessoa'},false,{cookie:sessao})).status,400);
 });
 test('arquivos e cabeçalhos de segurança',async()=>{const r=await fetch(base);assert.equal(r.status,200);assert.match(r.headers.get('content-security-policy'),/frame-ancestors 'none'/);assert.equal((await fetch(base+'/db.js')).status,404);assert.equal((await fetch(base+'/visaoResumo.js')).status,200);assert.match((await fetch(base+'/visaoResumo.js')).headers.get('content-type'),/javascript/);});

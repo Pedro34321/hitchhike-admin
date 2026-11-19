@@ -2,10 +2,12 @@ import { Worker } from 'node:worker_threads';
 let ocupado=false;
 export function lerCnh(imagem) {
  if(ocupado)throw Object.assign(Error('OCR ocupado. Aguarde a leitura atual.'),{status:429});
- if(typeof imagem!=='string'||imagem.length>7000000||!/^data:(?:image\/(?:png|jpeg)|application\/pdf);base64,[A-Za-z0-9+/=]+$/.test(imagem))throw Object.assign(Error('Envie PDF, PNG ou JPEG de até 5 MB.'),{status:400});
+ if(typeof imagem!=='string'||imagem.length>7000000)throw Object.assign(Error('Envie o PDF original da CNH de até 5 MB.'),{status:400});
+ if(!imagem.startsWith('data:application/pdf;'))throw Object.assign(Error('Aceitamos somente PDF da CNH com frente, verso e QR Code legível. Imagens não são aceitas.'),{status:415});
+ if(!/^data:application\/pdf;base64,[A-Za-z0-9+/=]+$/.test(imagem))throw Object.assign(Error('Arquivo PDF inválido.'),{status:400});
  const buffer=Buffer.from(imagem.split(',')[1],'base64');
  const pdf=imagem.startsWith('data:application/pdf;');
- if(buffer.length>5*1024*1024||!(pdf?buffer.subarray(0,5).toString()==='%PDF-':((buffer[0]===0xff&&buffer[1]===0xd8)||buffer.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))))throw Object.assign(Error('Arquivo inválido.'),{status:400});
+ if(buffer.length>5*1024*1024||buffer.subarray(0,5).toString()!=='%PDF-')throw Object.assign(Error('Arquivo PDF inválido. Renomear uma imagem não a transforma em PDF.'),{status:400});
  ocupado=true;
  return new Promise((resolve,reject)=>{
   const worker=new Worker(new URL('./ocr-worker.js',import.meta.url),{workerData:{buffer,pdf},resourceLimits:{maxOldGenerationSizeMb:256}});

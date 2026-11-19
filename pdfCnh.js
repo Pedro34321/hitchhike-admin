@@ -1,4 +1,4 @@
-import {createCanvas,getDocument,OPS} from './ocrDependencias.js';
+import {createCanvas,getDocument,OPS,jsQR} from './ocrDependencias.js';
 function multiplicar(m,n){return [m[0]*n[0]+m[2]*n[1],m[1]*n[0]+m[3]*n[1],m[0]*n[2]+m[2]*n[3],m[1]*n[2]+m[3]*n[3],m[0]*n[4]+m[2]*n[5]+m[4],m[1]*n[4]+m[3]*n[5]+m[5]];}
 export function localizarFrentes(ops,viewport){
  let matrix=[1,0,0,1,0,0];const stack=[],imagens=[];
@@ -26,4 +26,14 @@ export function recortar(canvas,r){
 }
 export function ampliarParaOcr(canvas){
  const out=createCanvas(canvas.width*3+40,canvas.height*3+40),ctx=out.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,out.width,out.height);ctx.drawImage(canvas,20,20,canvas.width*3,canvas.height*3);const data=ctx.getImageData(0,0,out.width,out.height);for(let i=0;i<data.data.length;i+=4){const v=.299*data.data[i]+.587*data.data[i+1]+.114*data.data[i+2]<170?0:255;data.data[i]=data.data[i+1]=data.data[i+2]=v;}ctx.putImageData(data,0,0);return out;
+}
+export function temQrLegivel(canvas){
+ const direita=recortar(canvas,{x:canvas.width*.5,y:0,width:canvas.width*.5,height:canvas.height*.6});
+ return detectarQr(canvas)||detectarQr(direita);
+}
+function detectarQr(canvas){
+ const pixels=canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height);
+ const rgba=new Uint8ClampedArray(pixels.data);
+ for(let i=0;i<rgba.length;i+=4){const a=rgba[i+3]/255;for(let c=0;c<3;c++)rgba[i+c]=Math.round(rgba[i+c]*a+255*(1-a));rgba[i+3]=255;}
+ return !!jsQR(rgba,canvas.width,canvas.height,{inversionAttempts:'attemptBoth'});
 }

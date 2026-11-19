@@ -1,5 +1,7 @@
 # Hitchhike Admin
 
+**Envio de CNH: somente PDF original completo**, com frente, verso e QR Code legível, em uma página e até 5 MB. Imagens PNG/JPG, arquivos renomeados para PDF e PDFs sem QR detectável são recusados. A detecção de QR não substitui a conferência manual de autenticidade no Vio. Consulte [a política e o fluxo de conferência](docs/CNH.md).
+
 ## Novo: conferência de CNH com OCR gratuito
 
 Motoristas agora inclui OCR local em português, correção dos dados pelo administrador, confirmação manual do documento/QR no Vio e controle periódico de vencimento no Firebase. A aprovação exige conferência apta. Antes de usar dados reais, leia [instalação, proteção das coleções e integração Flutter](docs/CNH.md). Não há consulta de suspensão/cassação no Detran. As descrições anteriores de ausência de OCR referem-se à versão inicial.

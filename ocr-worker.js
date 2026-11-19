@@ -7,8 +7,9 @@ let worker;
 try {
  worker=await createWorker('por',1,{langPath:por.langPath,gzip:true,cacheMethod:'none',errorHandler:()=>{}});
  if(workerData.pdf){
-  const {renderizarPdf,recortar,ampliarParaOcr}=await import('./pdfCnh.js');
+  const {renderizarPdf,recortar,ampliarParaOcr,temQrLegivel}=await import('./pdfCnh.js');
   const {canvas,frente}=await renderizarPdf(workerData.buffer);
+  if(!temQrLegivel(canvas))throw Error('QR Code não identificado ou ilegível. Envie o PDF original completo da CNH com o QR Code legível.');
   if(frente){
    const card=recortar(canvas,frente);
    const campos={nome:{rotulo:[.18,.252,.34,.031],valor:[.18,.281,.61,.041]},validade:{rotulo:[.646,.421,.15,.025],valor:[.646,.445,.145,.040]},categoria:{rotulo:[.856,.581,.115,.025],valor:[.855,.607,.10,.038]}};
@@ -18,7 +19,7 @@ try {
     const rotulo=await ler(regioes.rotulo),valor=await ler(regioes.valor,campo==='categoria'?'ABCDE':campo==='validade'?'0123456789/.-':'');
     resultados[campo]={text:rotulo.text.trim()+'\n'+valor.text.trim(),confidence:valor.confidence};
    }
-   parentPort.postMessage(interpretarRegioes(resultados));
-  }else{const {data}=await worker.recognize(canvas.toBuffer('image/png'));parentPort.postMessage({...sugerirCnh(data.text,data.confidence),metodo:'pdf_pagina',mensagem:'PDF sem layout reconhecido. '+sugerirCnh(data.text,data.confidence).mensagem});}
+   parentPort.postMessage({...interpretarRegioes(resultados),qrDetectado:true});
+  }else{const {data}=await worker.recognize(canvas.toBuffer('image/png'));parentPort.postMessage({...sugerirCnh(data.text,data.confidence),metodo:'pdf_pagina',qrDetectado:true,mensagem:'PDF sem layout reconhecido. '+sugerirCnh(data.text,data.confidence).mensagem});}
  }else{const {data}=await worker.recognize(Buffer.from(workerData.buffer));parentPort.postMessage({...sugerirCnh(data.text,data.confidence),metodo:'imagem'});}
-}catch(e){parentPort.postMessage({erro:true,mensagem:e.name==='PasswordException'?'PDF protegido por senha. Use uma cópia sem senha para a leitura.':e.message==='Envie o PDF da CNH com uma página.'?e.message:'Não foi possível ler o arquivo. Verifique o PDF ou preencha manualmente.'});}finally{if(worker)await worker.terminate();}
+}catch(e){parentPort.postMessage({erro:true,mensagem:e.name==='PasswordException'?'PDF protegido por senha. Use uma cópia sem senha para a leitura.':e.message==='Envie o PDF da CNH com uma página.'||e.message.startsWith('QR Code não identificado')?e.message:'Não foi possível ler o arquivo. Verifique o PDF ou preencha manualmente.'});}finally{if(worker)await worker.terminate();}

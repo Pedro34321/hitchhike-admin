@@ -1,5 +1,13 @@
 # CNH: OCR gratuito e conferência administrativa
 
+## Política atual: somente PDF completo com QR Code
+
+Aceitamos somente PDF original da CNH com frente, verso e QR Code legível, em uma página e até 5 MB. Fotos, prints, PNG e JPG são recusados no formulário e na API (HTTP 415). Uma imagem renomeada para .pdf ou declarada como application/pdf é recusada pela verificação de conteúdo, e o parser precisa conseguir abrir o PDF. PDF sem QR detectável/legível é recusado (HTTP 422).
+
+A detecção genérica de QR é feita localmente e retorna apenas `qrDetectado: true`; o payload não é armazenado nem devolvido. Encontrar um QR não demonstra que ele seja um QR Vio legítimo, que corresponda à CNH, nem que frente/verso estejam completos. O administrador deve conferir a documentação completa e comparar os dados no aplicativo oficial Vio. PDFs com impressão degradada ou QR incompatível com o leitor local podem ser rejeitados e devem ser reenviados a partir do original. O formulário é administrativo; o envio pelo Flutter ainda exige integração correspondente.
+
+Esta política substitui a aceitação de imagens descrita nas seções históricas abaixo.
+
 ## Atualização: PDF original e leitura por regiões
 
 Agora aceita PDF de uma página, PNG ou JPEG, até 5 MB. Instale as dependências atualizadas com `npm install` (PDF.js e @napi-rs/canvas, além do Tesseract). O PDF é renderizado em memória. No layout de exportação com imagens separadas da frente e verso, o sistema localiza a frente pela geometria e confirma o layout pelos rótulos: nome, 4b (validade) e 9 (categoria). Cada valor é lido separadamente do rótulo, com ampliação e binarização. A data de emissão fica fora do recorte de validade.

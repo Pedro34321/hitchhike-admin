@@ -47,15 +47,19 @@ test('controle percorre mais de 100 CNHs, retira acesso vencido, mantém renova�
  assert.equal((await processarVencimentos()).bloqueados,102);assert.equal(db.docs.get('usuarios/u100').condutorValidado,false);assert.equal(db.docs.get('usuarios/u102').condutorValidado,true);assert.equal((await processarVencimentos()).bloqueados,0);
  assert.equal([...db.docs.keys()].filter(x=>x.startsWith('cnh_eventos/')).length,102);
 });
-test('OCR executa de verdade em português, offline, sobre texto sintético',async()=>{
- const buffer=await readFile(new URL('./fixtures/ocr-sintetico.png',import.meta.url));
- const r=await lerCnh('data:image/png;base64,'+buffer.toString('base64'));assert.equal(r.revisaoNecessaria,true);assert.equal(r.sugestoes.validade,'2030-11-18');
- assert.throws(()=>lerCnh('data:image/jpeg;base64,aGVsbG8='),/inválid[oa]/);
+test('imagens são rejeitadas, inclusive renomeadas para PDF',async()=>{
+ const b=await readFile(new URL('./fixtures/ocr-sintetico.png',import.meta.url));
+ for(const tipo of ['image/png','image/jpeg'])assert.throws(()=>lerCnh('data:'+tipo+';base64,'+b.toString('base64')),e=>e.status===415);
+ assert.throws(()=>lerCnh('data:application/pdf;base64,'+b.toString('base64')),e=>e.status===400);
 });
 test('PDF sintético: lê campos por região e separa emissão da validade',async()=>{
  const buffer=await readFile(new URL('./fixtures/cnh-sintetica.pdf',import.meta.url));
  const r=await lerCnh('data:application/pdf;base64,'+buffer.toString('base64'));
- assert.equal(r.metodo,'pdf_regioes');assert.equal(r.sugestoes.validade,'2030-11-18');assert.equal(r.sugestoes.categoria,'B');assert.equal(r.sugestoes.nome,'PESSOA FICTICIA TESTE');assert.equal(r.revisaoNecessaria,true);
+ assert.equal(r.metodo,'pdf_regioes');assert.equal(r.qrDetectado,true);assert.equal(r.sugestoes.validade,'2030-11-18');assert.equal(r.sugestoes.categoria,'B');assert.equal(r.sugestoes.nome,'PESSOA FICTICIA TESTE');assert.equal(r.revisaoNecessaria,true);
+});
+test('PDF sem QR Code é rejeitado sem sugestões de aprovação',async()=>{
+ const b=await readFile(new URL('./fixtures/cnh-sem-qr.pdf',import.meta.url));
+ await assert.rejects(()=>lerCnh('data:application/pdf;base64,'+b.toString('base64')),e=>e.status===422&&/QR Code/.test(e.message));
 });
 test('PDF inválido, protegido e de múltiplas páginas não fornece sugestões',async()=>{
  assert.throws(()=>lerCnh('data:application/pdf;base64,aGVsbG8='),/inválido/);
