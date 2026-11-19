@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { FieldPath, getFirestore } from 'firebase-admin/firestore';
+import { avaliarCnh } from './cnh.js';
 
 const PROJETO = 'hitchhike-9568f';
 const CAMPOS_SOLICITACAO = ['placa', 'modelo', 'cor', 'status'];
@@ -58,7 +59,7 @@ export function auditoriaDeTeste() {
   return auditoriaTeste;
 }
 
-async function banco() {
+export async function banco() {
   if (provedorTeste) return provedorTeste();
   return obterFirestore();
 }
@@ -228,6 +229,7 @@ export async function listarCaronas(agoraMillis = Date.now()) {
 }
 
 const ERROS_DECISAO = {
+  cnh_pendente: [409, 'Confira a CNH e o QR no Vio, com categoria compatível e validade vigente, antes de aprovar.'],
   nao_encontrada: [404, 'Solicitação não encontrada.'],
   ja_analisada: [409, 'Esta solicitação já foi analisada.'],
   uid_divergente: [409, 'A solicitação não pertence a este usuário.'],
@@ -255,10 +257,12 @@ export async function decidirSolicitacaoMotorista(uid, decisao) {
       if (!solicitacaoDoc.exists) throw erroDecisao('nao_encontrada');
       const solicitacao = solicitacaoDoc.data() || {};
       if (Object.hasOwn(solicitacao, 'motoristaUid') && solicitacao.motoristaUid !== uid) throw erroDecisao('uid_divergente');
-      if (solicitacao.status !== 'PENDENTE') throw erroDecisao('ja_analisada');
       const usuario = usuarioDoc.exists ? usuarioDoc.data() || {} : null;
+      if (solicitacao.status !== 'PENDENTE' && !(decisao==='aprovar' && solicitacao.status==='APROVADA' && usuario?.condutorValidado===false)) throw erroDecisao('ja_analisada');
       if (decisao === 'aprovar') {
         if (!usuario || usuario.status !== 'ATIVO') throw erroDecisao('usuario_inativo');
+        const conferencia=await tx.get(db.collection('cnh_admin').doc(uid));
+        if(!conferencia.exists || !avaliarCnh(conferencia.data()).apta)throw erroDecisao('cnh_pendente');
         tx.update(usuarioRef, { condutorValidado: true, papelAtivo: 'MOTORISTA' });
         tx.update(solicitacaoRef, { status: 'APROVADA' });
         return { statusSolicitacao: 'APROVADA', acao: 'motorista aprovado', motivo: 'Solicitação aprovada no Firestore' };

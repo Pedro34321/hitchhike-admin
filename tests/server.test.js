@@ -42,6 +42,16 @@ assert.equal((await call('data')).status,401);
 r=await call('login',{email:'test@example.com',password:'NewPassword123456'},false);assert.equal(r.status,200);cookie=r.headers.get('set-cookie').split(';')[0];assert.equal((await call('logout',{})).status,200);assert.equal((await call('data')).status,401);
 });
 test('CSV neutraliza fórmulas e escapa aspas',()=>{assert.equal(csvCell('=2+2'),'"\'=2+2"');assert.equal(csvCell(' +SUM(A1)'),'"\' +SUM(A1)"');assert.equal(csvCell('a"b'),'"a""b"');});
+test('rotas CNH exigem sessão, origem permitida e campos válidos',async()=>{
+ assert.equal((await call('cnh',null,false)).status,401);
+ assert.equal((await call('cnh/ocr',{imagem:'invalida'},false)).status,401);
+ assert.equal((await call('cnh/uid',{nome:'Pessoa'},false)).status,401);
+ const r=await call('login',{email:'reader@example.com',password:'ReaderPassword123'},false);
+ const sessao=r.headers.get('set-cookie').split(';')[0];
+ assert.equal((await call('cnh/ocr',{imagem:'invalida'},false,{cookie:sessao,Origin:'https://evil.example'})).status,403);
+ assert.equal((await call('cnh/ocr',{imagem:'invalida'},false,{cookie:sessao})).status,415);
+ assert.equal((await call('cnh/uid',{nome:'Pessoa'},false,{cookie:sessao})).status,400);
+});
 test('arquivos e cabeçalhos de segurança',async()=>{const r=await fetch(base);assert.equal(r.status,200);assert.match(r.headers.get('content-security-policy'),/frame-ancestors 'none'/);assert.equal((await fetch(base+'/db.js')).status,404);assert.equal((await fetch(base+'/visaoResumo.js')).status,200);assert.match((await fetch(base+'/visaoResumo.js')).headers.get('content-type'),/javascript/);});
 test('leitura das solicitações reais exige administrador e oculta dados sensíveis',async()=>{
 const login=await call('login',{email:'reader@example.com',password:'ReaderPassword123'},false);
@@ -86,7 +96,9 @@ try{
  assert.equal(Object.hasOwn(corpo.solicitacoes[0],'cnhNumero'),false);
  assert.doesNotMatch(JSON.stringify(corpo),/cnh-12345678900|hash-da-senha-local|BEGIN PRIVATE KEY/);
 }finally{definirProvedorParaTeste(null);}
+const conferencia={nome:'Marina',categoria:'B',validade:'2099-12-31',documentoConferido:true,qrConferidoVio:true};
 const loja=criarFirestore([
+ ...['uidAprovar','uidParalelo','uidAuditoria'].map(uid=>['cnh_admin/'+uid,conferencia]),
  ['solicitacoes_motoristas/uidAprovar',pedido('uidAprovar')],['usuarios/uidAprovar',perfil()],
  ['solicitacoes_motoristas/uidRecusar',pedido('uidRecusar')],['usuarios/uidRecusar',perfil()],
  ['solicitacoes_motoristas/uidAntigo',pedido('uidAntigo','aprovado')],['usuarios/uidAntigo',perfil()],
