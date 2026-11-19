@@ -1,5 +1,15 @@
 # CNH: OCR gratuito e conferência administrativa
 
+## Atualização: PDF original e leitura por regiões
+
+Agora aceita PDF de uma página, PNG ou JPEG, até 5 MB. Instale as dependências atualizadas com `npm install` (PDF.js e @napi-rs/canvas, além do Tesseract). O PDF é renderizado em memória. No layout de exportação com imagens separadas da frente e verso, o sistema localiza a frente pela geometria e confirma o layout pelos rótulos: nome, 4b (validade) e 9 (categoria). Cada valor é lido separadamente do rótulo, com ampliação e binarização. A data de emissão fica fora do recorte de validade.
+
+PDF sem esse layout passa pela leitura conservadora da página e pode exigir preenchimento manual. Não há garantia de compatibilidade com todos os modelos, versões, rotações ou PDFs digitalizados. PDF protegido por senha, inválido ou com mais de uma página gera uma mensagem de revisão, sem aprovação. O limite de processamento continua sendo 60 segundos e uma leitura por vez.
+
+A confiança mínima de 70 é uma regra de triagem, não um limiar estatístico de segurança validado. Na leitura da página/imagem, baixa confiança deixa todas as sugestões vazias. Na leitura por regiões, o limiar é aplicado a cada campo e os rótulos esperados precisam ser reconhecidos. A conferência humana continua obrigatória mesmo com resultado completo. Renderizar um PDF não verifica sua assinatura digital, sua autenticidade nem a situação atual no Detran.
+
+Os PDFs de teste em `tests/fixtures/` são inteiramente fictícios. Nenhum documento real foi incluído no repositório.
+
 Implementação baseada no commit `89454f3` (17/11/2026), preservando a integração Firebase e pagamentos. Não há consulta ao Detran nem API paga. O Tesseract.js executa OCR em português **no próprio servidor**, com o modelo instalado pelo npm; a imagem não é enviada a um fornecedor de OCR, persistida ou incluída em logs. Processamento e hospedagem consomem recursos.
 
 ## Instalação e uso

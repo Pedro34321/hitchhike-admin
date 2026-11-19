@@ -50,5 +50,14 @@ test('controle percorre mais de 100 CNHs, retira acesso vencido, mantém renova�
 test('OCR executa de verdade em português, offline, sobre texto sintético',async()=>{
  const buffer=await readFile(new URL('./fixtures/ocr-sintetico.png',import.meta.url));
  const r=await lerCnh('data:image/png;base64,'+buffer.toString('base64'));assert.equal(r.revisaoNecessaria,true);assert.equal(r.sugestoes.validade,'2030-11-18');
- assert.throws(()=>lerCnh('data:image/jpeg;base64,aGVsbG8='),/inválida/);
+ assert.throws(()=>lerCnh('data:image/jpeg;base64,aGVsbG8='),/inválid[oa]/);
+});
+test('PDF sintético: lê campos por região e separa emissão da validade',async()=>{
+ const buffer=await readFile(new URL('./fixtures/cnh-sintetica.pdf',import.meta.url));
+ const r=await lerCnh('data:application/pdf;base64,'+buffer.toString('base64'));
+ assert.equal(r.metodo,'pdf_regioes');assert.equal(r.sugestoes.validade,'2030-11-18');assert.equal(r.sugestoes.categoria,'B');assert.equal(r.sugestoes.nome,'PESSOA FICTICIA TESTE');assert.equal(r.revisaoNecessaria,true);
+});
+test('PDF inválido, protegido e de múltiplas páginas não fornece sugestões',async()=>{
+ assert.throws(()=>lerCnh('data:application/pdf;base64,aGVsbG8='),/inválido/);
+ for(const file of ['pdf-duas-paginas.pdf','pdf-senha.pdf']){const b=await readFile(new URL('./fixtures/'+file,import.meta.url));await assert.rejects(()=>lerCnh('data:application/pdf;base64,'+b.toString('base64')),/uma página|senha/);}
 });
