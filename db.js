@@ -1,7 +1,15 @@
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-const path = process.env.DB_PATH || resolve('data/admin.sqlite');
+import { existsSync, mkdirSync } from 'node:fs';
+import { dirname, resolve, relative, isAbsolute, join } from 'node:path';
+const volume = process.env.RAILWAY_VOLUME_MOUNT_PATH;
+if (process.env.RAILWAY_PROJECT_ID && (!volume || !existsSync(volume))) {
+  throw new Error('Monte um volume persistente no Railway antes de iniciar o painel.');
+}
+const path = resolve(process.env.DB_PATH || (volume ? join(volume, 'admin.sqlite') : 'data/admin.sqlite'));
+if (process.env.RAILWAY_PROJECT_ID) {
+  const inside = relative(resolve(volume), path);
+  if (!inside || inside.startsWith('..') || isAbsolute(inside)) throw new Error('DB_PATH deve apontar para um arquivo dentro do volume persistente.');
+}
 mkdirSync(dirname(path), { recursive: true });
 export const db = new DatabaseSync(path);
 db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
@@ -13,3 +21,4 @@ CREATE TABLE IF NOT EXISTS reports(id INTEGER PRIMARY KEY, target_id INTEGER NOT
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, actor TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, reason TEXT NOT NULL, created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);`);
 export function audit(actor, action, target, reason) { db.prepare('INSERT INTO audit(actor,action,target,reason,created) VALUES(?,?,?,?,?)').run(actor,action,String(target),reason,new Date().toISOString()); }
+
