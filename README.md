@@ -51,6 +51,8 @@ Execute `npm test`. Os testes usam um banco temporário e verificam acesso prote
 
 ## Hospedar
 
+Para hospedagem temporária no Railway com volume SQLite persistente, siga [docs/RAILWAY.md](docs/RAILWAY.md). O Dockerfile usa Node.js 24; os dados ficam fora da imagem. Atualizações de código não recriam contas administrativas.
+
 **GitHub armazena o código; GitHub Pages não executa este servidor nem SQLite.** Use um servidor com Node.js 24 e disco persistente. Execute `npm run setup` no ambiente de hospedagem, configure `NODE_ENV=production` e coloque um proxy HTTPS na frente do processo local (porta 3000 por padrão). Em produção o cookie exige HTTPS. Mantenha a pasta `data/` em volume persistente e faça backups consistentes do SQLite, incluindo o estado WAL (preferencialmente pelo mecanismo de backup do SQLite).
 
 As variáveis opcionais são `PORT`, `DB_PATH`, `NODE_ENV` e `FIREBASE_SERVICE_ACCOUNT_PATH`. O comando `npm start` carrega `.env` quando esse arquivo existe. A variável aponta para o JSON da conta de serviço do projeto `hitchhike-9568f`, guardado fora do repositório. Sem essa credencial, o painel local continua ativo e informa que a leitura do Firestore está indisponível. A tela Usuários consulta `usuarios` e a tela Viagens consulta `caronas`, ambas sem alterar documentos. O CSV continua exportando somente as viagens do SQLite. Aprovar e recusar uma solicitação real grava o Firestore primeiro e a auditoria do SQLite em seguida. Se só a auditoria falhar, o painel informa que a decisão já foi aplicada e não a desfaz. O servidor escuta em `127.0.0.1`, adequado para proxy reverso na mesma máquina. Não altere para exposição pública sem configurar HTTPS e os controles do ambiente.
@@ -60,3 +62,4 @@ Esta versão usa limitação de login em memória por IP (10 tentativas / 15 min
 ## Referências do TCC
 
 A documentação enviada descreve caronas universitárias e o papel de supervisão do administrador. O projeto implementa as funcionalidades pedidas na conversa. As orientações acadêmicas dos anexos são contexto documental; não foram tratadas como ordens para alterar o TCC ou contatar professores. Os documentos originais não são publicados neste repositório.
+

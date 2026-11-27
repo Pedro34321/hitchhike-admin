@@ -1,0 +1,10 @@
+node_modules
+.git
+.env
+data
+*.log
+*.sqlite*
+*firebase-adminsdk*.json
+firebase-service-account.json
+serviceAccount*.json
+service-account*.json

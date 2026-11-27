@@ -42,6 +42,7 @@ assert.equal((await call('data')).status,401);
 r=await call('login',{email:'test@example.com',password:'NewPassword123456'},false);assert.equal(r.status,200);cookie=r.headers.get('set-cookie').split(';')[0];assert.equal((await call('logout',{})).status,200);assert.equal((await call('data')).status,401);
 });
 test('CSV neutraliza fórmulas e escapa aspas',()=>{assert.equal(csvCell('=2+2'),'"\'=2+2"');assert.equal(csvCell(' +SUM(A1)'),'"\' +SUM(A1)"');assert.equal(csvCell('a"b'),'"a""b"');});
+test('health check não exige sessão nem expõe dados',async()=>{const r=await fetch(base+'/healthz');assert.equal(r.status,200);assert.deepEqual(await r.json(),{ok:true});});
 test('arquivos e cabeçalhos de segurança',async()=>{const r=await fetch(base);assert.equal(r.status,200);assert.match(r.headers.get('content-security-policy'),/frame-ancestors 'none'/);assert.equal((await fetch(base+'/db.js')).status,404);assert.equal((await fetch(base+'/visaoResumo.js')).status,200);assert.match((await fetch(base+'/visaoResumo.js')).headers.get('content-type'),/javascript/);});
 test('leitura das solicitações reais exige administrador e oculta dados sensíveis',async()=>{
 const login=await call('login',{email:'reader@example.com',password:'ReaderPassword123'},false);
@@ -255,3 +256,4 @@ try{
  assert.equal(lote.caronas.some(item=>item.id==='carona100'),false);
 }finally{definirProvedorParaTeste(null);definirAuditoriaParaTeste(null);}
 });
+

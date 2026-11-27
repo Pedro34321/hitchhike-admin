@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { randomBytes, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
 import { db, audit } from './db.js';
+import { bootstrapAdmin } from './bootstrapAdmin.js';
 import { tratarPagamentos } from './pagamentos.js';
 import { listarSolicitacoesMotoristas, decidirSolicitacaoMotorista, listarUsuarios, listarCaronas, auditoriaDeTeste } from './firebaseMotoristas.js';
 const prod=process.env.NODE_ENV==='production';
@@ -23,6 +24,7 @@ export const server=http.createServer(async(req,res)=>{
  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
  try{
  const url=new URL(req.url,'http://localhost');const path=url.pathname;
+ if(path==='/healthz'&&req.method==='GET'){db.prepare('SELECT 1').get();json(res,200,{ok:true});return;}
   /* Pagamentos de teste: autenticação Firebase ou assinatura do webhook, tratadas no módulo (sem cookie administrativo). */
   if(path.startsWith('/api/pagamentos/')&&await tratarPagamentos(req,res,url))return;
  if(req.method==='GET'&&!path.startsWith('/api/')){const files={'/':'index.html','/styles.css':'styles.css','/app.js':'app.js','/visaoResumo.js':'visaoResumo.js'};if(!files[path])fail('Página não encontrada',404);const type=path.endsWith('.css')?'text/css':path.endsWith('.js')?'text/javascript':'text/html';res.writeHead(200,{'Content-Type':type+'; charset=utf-8'});res.end(await readFile(publicDir+files[path]));return;}
@@ -57,4 +59,8 @@ export const server=http.createServer(async(req,res)=>{
  fail('Rota não encontrada',404);
  }catch(e){if(!e.status)console.error('Falha no servidor:',e.message);json(res,e.status||500,{error:e.status?e.message:'Erro interno. Tente novamente.'});}
 });
-if(process.argv[1]===fileURLToPath(import.meta.url)){server.listen(Number(process.env.PORT||3000),'127.0.0.1',()=>console.log(`Hitchhike: http://localhost:${process.env.PORT||3000}`));}
+if(process.argv[1]===fileURLToPath(import.meta.url)){
+ bootstrapAdmin(db);
+ server.listen(Number(process.env.PORT||3000),process.env.HOST||'127.0.0.1',()=>console.log('Hitchhike: servidor iniciado.'));
+}
+

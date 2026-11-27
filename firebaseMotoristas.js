@@ -66,17 +66,18 @@ async function banco() {
 export function obterFirestore() {
   if (firestore) return firestore;
   const caminho = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
-  if (!caminho) {
+  const jsonAmbiente = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (!caminho && !jsonAmbiente) {
     detalhe = 'A variável FIREBASE_SERVICE_ACCOUNT_PATH não está definida. O painel local continua ativo.';
     return null;
   }
-  if (!existsSync(caminho)) {
+  if (!jsonAmbiente && !existsSync(caminho)) {
     detalhe = 'O arquivo indicado por FIREBASE_SERVICE_ACCOUNT_PATH não foi encontrado. O painel local continua ativo.';
     return null;
   }
   let conta;
   try {
-    conta = JSON.parse(readFileSync(caminho, 'utf8'));
+    conta = JSON.parse(jsonAmbiente || readFileSync(caminho, 'utf8'));
   } catch {
     detalhe = 'Não foi possível ler o arquivo de credenciais do Firebase. O painel local continua ativo.';
     return null;
@@ -275,3 +276,4 @@ export async function decidirSolicitacaoMotorista(uid, decisao) {
     return { ok: false, status: 503, error: 'Não foi possível registrar a decisão no Firestore. Nenhuma alteração foi confirmada.' };
   }
 }
+
